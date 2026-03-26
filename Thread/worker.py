@@ -16,7 +16,7 @@ def enviar_heartbeat():
             
             # Payload Oficial (Tarefa 02) [cite: 70]
             payload = {
-                "SERVER_UUID": SERVER_UUID,
+                "SERVER_UUID": "Master_3",
                 "TASK": "HEARTBEAT"
             }
             

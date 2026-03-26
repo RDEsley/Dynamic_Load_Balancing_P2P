@@ -23,7 +23,7 @@ def tratar_cliente(conn, addr):
                 # Lógica de Resposta (Tarefa 03)
                 if payload.get("TASK") == "HEARTBEAT":
                     resposta = {
-                        "SERVER_UUID": SERVER_UUID,
+                        "SERVER_UUID": "Master_3",
                         "TASK": "HEARTBEAT",
                         "RESPONSE": "ALIVE"
                     }
