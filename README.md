@@ -281,6 +281,6 @@ Distribuído sob a licença MIT. Veja o arquivo [LICENSE](LICENSE) para mais det
 
 ## 👥 Equipe
 
-> Fernanda Kikuchi
-> Richard Esley
-> Matheus Brandão
+> [Fernanda Kikuchi](https://github.com/FeMeNiKi) <br>
+> [Richard Esley](https://github.com/RDEsley) <br>
+> [Matheus Brandão](https://github.com/AtsocD)
