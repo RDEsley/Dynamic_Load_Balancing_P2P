@@ -2,11 +2,11 @@ import asyncio
 import json
 import socket
 
-HOST = '192.168.0.45'
+HOST = '10.62.217.31'
 PORT = 8000
 SERVER_UUID = "Master_3"
 WORKER_UUID = "Worker_1"  # Hardcoded - Único para este worker
-INTERVALO = 30 # Segundos entre verificações [cite: 76]
+INTERVALO = 30 # Segundos entre verificações
 
 def is_remote_worker():
     """Verifica se o Worker está em IP diferente do Master"""
@@ -19,10 +19,10 @@ def is_remote_worker():
 async def enviar_heartbeat():
     while True:
         try:
-            # Abre a conexão TCP (Tarefa 01) [cite: 66, 79]
+            # Abre a conexão TCP
             reader, writer = await asyncio.open_connection(HOST, PORT)
             
-            # Novo Payload - WORKER alive signal (Tarefa 02) [cite: 70]
+            # Novo Payload - WORKER alive signal
             payload = {
                 "WORKER": "ALIVE",
                 "WORKER_UUID": WORKER_UUID
@@ -43,22 +43,15 @@ async def enviar_heartbeat():
             if data:
                 res = json.loads(data.decode().strip())
                 print(f"[LOG] Resposta do Master: {json.dumps(res)}")
-                
-                # Processa resposta conforme o tipo de tarefa
-                if res.get("TASK") == "QUERY":
-                    user = res.get("USER")
-                    print(f"[TASK] Executando tarefa para: {user}")
-                elif res.get("TASK") == "NO_TASK":
-                    print(f"[INFO] Nenhuma tarefa disponível no momento")
 
             writer.close()
             await writer.wait_closed()
 
         except Exception as e:
-            # Caso o Master esteja offline (Tarefa 04) [cite: 97]
+            # Caso o Master esteja offline
             print(f"[LOG] Status: OFFLINE - {str(e)} - Tentando Reconectar")
 
-        # Pausa assíncrona (não bloqueia o loop) [cite: 88]
+        # Pausa assíncrona (não bloqueia o loop)
         await asyncio.sleep(INTERVALO)
 
 if __name__ == "__main__":
