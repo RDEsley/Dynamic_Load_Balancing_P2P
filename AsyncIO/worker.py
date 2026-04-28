@@ -1,10 +1,20 @@
 import asyncio
 import json
+import socket
 
-HOST = '10.62.217.31'
+HOST = '192.168.0.45'
 PORT = 8000
 SERVER_UUID = "Master_3"
+WORKER_UUID = "Worker_1"  # Hardcoded - Único para este worker
 INTERVALO = 30 # Segundos entre verificações [cite: 76]
+
+def is_remote_worker():
+    """Verifica se o Worker está em IP diferente do Master"""
+    try:
+        local_ip = socket.gethostbyname(socket.gethostname())
+        return local_ip != HOST
+    except:
+        return False
 
 async def enviar_heartbeat():
     while True:
@@ -12,11 +22,18 @@ async def enviar_heartbeat():
             # Abre a conexão TCP (Tarefa 01) [cite: 66, 79]
             reader, writer = await asyncio.open_connection(HOST, PORT)
             
-            # Payload de envio (Tarefa 02) [cite: 70]
+            # Novo Payload - WORKER alive signal (Tarefa 02) [cite: 70]
             payload = {
-                "SERVER_UUID": "Master_3",
-                "TASK": "HEARTBEAT"
+                "WORKER": "ALIVE",
+                "WORKER_UUID": WORKER_UUID
             }
+            
+            # Adiciona SERVER_UUID se for Worker remoto
+            if is_remote_worker():
+                payload["SERVER_UUID"] = SERVER_UUID
+            
+            # Log do payload antes de enviar
+            print(f"[LOG] Enviando payload: {json.dumps(payload)}")
             
             writer.write((json.dumps(payload) + "\n").encode())
             await writer.drain()
@@ -25,15 +42,21 @@ async def enviar_heartbeat():
             data = await reader.readline()
             if data:
                 res = json.loads(data.decode().strip())
-                if res.get("RESPONSE") == "ALIVE":
-                    print(f"[LOG] Status: ALIVE")
+                print(f"[LOG] Resposta do Master: {json.dumps(res)}")
+                
+                # Processa resposta conforme o tipo de tarefa
+                if res.get("TASK") == "QUERY":
+                    user = res.get("USER")
+                    print(f"[TASK] Executando tarefa para: {user}")
+                elif res.get("TASK") == "NO_TASK":
+                    print(f"[INFO] Nenhuma tarefa disponível no momento")
 
             writer.close()
             await writer.wait_closed()
 
-        except Exception:
+        except Exception as e:
             # Caso o Master esteja offline (Tarefa 04) [cite: 97]
-            print("[LOG] Status: OFFLINE - Tentando Reconectar")
+            print(f"[LOG] Status: OFFLINE - {str(e)} - Tentando Reconectar")
 
         # Pausa assíncrona (não bloqueia o loop) [cite: 88]
         await asyncio.sleep(INTERVALO)
