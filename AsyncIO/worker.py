@@ -2,7 +2,7 @@ import asyncio
 import json
 import socket
 
-HOST = '10.62.217.31'
+HOST = ''
 PORT = 8000
 SERVER_UUID = "Master_3"
 WORKER_UUID = "Worker_1"  # Hardcoded - Único para este worker
@@ -39,14 +39,44 @@ async def enviar_heartbeat():
             await writer.drain()
 
             # Aguarda a resposta do Master
-            data = await reader.readline()
+            data = await asyncio.wait_for(reader.readline(), timeout=5)
             if data:
                 res = json.loads(data.decode().strip())
                 print(f"[LOG] Resposta do Master: {json.dumps(res)}")
 
+                if res.get("TASK") == "QUERY":
+                    print(f"[TASK] Processando tarefa para USER={res.get('USER')}")
+                    try:
+                        await asyncio.sleep(1)
+                        resultado = {
+                            "STATUS": "OK",
+                            "TASK": "QUERY",
+                            "WORKER_UUID": WORKER_UUID
+                        }
+                    except Exception:
+                        resultado = {
+                            "STATUS": "NOK",
+                            "TASK": "QUERY",
+                            "WORKER_UUID": WORKER_UUID
+                        }
+
+                    writer.write((json.dumps(resultado) + "\n").encode())
+                    await writer.drain()
+
+                    ack_data = await asyncio.wait_for(reader.readline(), timeout=5)
+                    if ack_data:
+                        ack = json.loads(ack_data.decode().strip())
+                        print(f"[LOG] ACK do Master: {json.dumps(ack)}")
+                elif res.get("TASK") == "NO_TASK":
+                    print("[INFO] Nenhuma tarefa disponível no momento")
+                else:
+                    print(f"[LOG] Resposta desconhecida do Master: {json.dumps(res)}")
+
             writer.close()
             await writer.wait_closed()
 
+        except asyncio.TimeoutError:
+            print("[LOG] Status: OFFLINE - timeout de 5 segundos excedido - Tentando Reconectar")
         except Exception as e:
             # Caso o Master esteja offline
             print(f"[LOG] Status: OFFLINE - {str(e)} - Tentando Reconectar")

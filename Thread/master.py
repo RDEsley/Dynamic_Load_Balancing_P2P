@@ -10,16 +10,26 @@ SERVER_UUID = "Master_3"
 # Fila global de tarefas (FIFO)
 task_queue = deque()
 queue_lock = threading.Lock()  # Lock para acesso thread-safe
+accepting_tasks = True
+
+
+def validar_payload(payload, campos_obrigatorios):
+    if not isinstance(payload, dict):
+        return False
+    return all(campo in payload for campo in campos_obrigatorios)
 
 def input_task_cli():
-    """Thread para adicionar tarefas à fila via input CLI (não bloqueia o servidor)"""
+    """Thread para adicionar e remover tarefas da fila via input CLI (não bloqueia o servidor)"""
+    global accepting_tasks
     while True:
         try:
-            # Aguarda input do usuário
-            user_input = input("[MASTER CLI] Digite 'add_task <user_name>' ou 'list': ")
+            user_input = input("[MASTER CLI] Digite 'add_task <user_name>', 'delete_task', 'clear', 'stop' ou 'list': ")
             
             if user_input.startswith("add_task "):
-                # Extrai o nome do usuário
+                if not accepting_tasks:
+                    print("[FILA] Entrada de tasks desativada. Use 'stop' ou reinicie o Master para habilitar novamente.")
+                    continue
+
                 user_name = user_input.replace("add_task ", "").strip()
                 if user_name:
                     with queue_lock:
@@ -27,6 +37,24 @@ def input_task_cli():
                         print(f"[TASK ADICIONADA] {user_name} - Fila agora tem {len(task_queue)} tarefa(s)")
                 else:
                     print("[ERRO] Digite: add_task <user_name>")
+
+            elif user_input == "delete_task":
+                with queue_lock:
+                    if task_queue:
+                        removed = task_queue.popleft()
+                        print(f"[TASK REMOVIDA] {removed} - Fila agora tem {len(task_queue)} tarefa(s)")
+                    else:
+                        print("[FILA] Vazia - nada para remover")
+
+            elif user_input == "clear":
+                with queue_lock:
+                    quantidade = len(task_queue)
+                    task_queue.clear()
+                    print(f"[FILA] Limpa. {quantidade} tarefa(s) removida(s).")
+
+            elif user_input == "stop":
+                accepting_tasks = False
+                print("[FILA] Entrada de novas tasks desativada. Tasks pendentes continuam até serem consumidas.")
             
             elif user_input == "list":
                 with queue_lock:
@@ -36,7 +64,7 @@ def input_task_cli():
                         print("[FILA] Vazia")
             
             else:
-                print("[ERRO] Comando inválido. Use 'add_task <user_name>' ou 'list'")
+                print("[ERRO] Comando inválido. Use 'add_task <user_name>', 'delete_task', 'clear', 'stop' ou 'list'")
         
         except Exception as e:
             print(f"[ERRO CLI] {str(e)}")
@@ -55,30 +83,41 @@ def tratar_cliente(conn, addr):
                 line, buffer = buffer.split("\n", 1)
                 payload = json.loads(line)
                 
-                # Lógica de Resposta - Novo formato com fila (Tarefa 03)
+                # Lógica de distribuição de tarefa (Master -> Worker)
                 if payload.get("WORKER") == "ALIVE":
-                    # Detecta se é Worker local ou remoto
+                    if not validar_payload(payload, {"WORKER", "WORKER_UUID"}):
+                        print(f"[ERRO] Payload ALIVE inválido ignorado de {addr}")
+                        continue
+
                     is_remote = "SERVER_UUID" in payload
                     
-                    # Acessa fila de tarefas (thread-safe)
                     with queue_lock:
                         if task_queue:
-                            # Se há tarefas, remove e envia a primeira (FIFO)
                             user_name = task_queue.popleft()
-                            resposta = {
-                                "TASK": "QUERY",
-                                "USER": user_name
-                            }
+                            resposta = {"TASK": "QUERY", "USER": user_name}
                             print(f"[TASK DISTRIBUIDA] Worker {'REMOTO' if is_remote else 'LOCAL'} - {addr} - USER: {user_name}")
                         else:
-                            # Se não há tarefas
-                            resposta = {
-                                "TASK": "NO_TASK"
-                            }
+                            resposta = {"TASK": "NO_TASK"}
                             print(f"[NO TASK] Worker {'REMOTO' if is_remote else 'LOCAL'} - {addr}")
                     
-                    # Envia resposta com o delimitador \n [cite: 67]
                     conn.sendall((json.dumps(resposta) + "\n").encode('utf-8'))
+
+                elif payload.get("STATUS") in ("OK", "NOK") and payload.get("TASK") == "QUERY":
+                    if not validar_payload(payload, {"STATUS", "TASK", "WORKER_UUID"}):
+                        print(f"[ERRO] Payload inválido de resultado ignorado de {addr}")
+                        continue
+
+                    worker_uuid = payload.get("WORKER_UUID", "unknown")
+                    print(f"[RESULTADO] Worker {worker_uuid} respondeu com STATUS={payload.get('STATUS')}")
+
+                    ack = {
+                        "STATUS": "ACK",
+                        "WORKER_UUID": worker_uuid
+                    }
+                    conn.sendall((json.dumps(ack) + "\n").encode('utf-8'))
+                    print(f"[ACK] Enviado para {worker_uuid}")
+                else:
+                    print(f"[ERRO] Payload desconhecido ou incompleto ignorado de {addr}: {payload}")
         
     except Exception as e:
         print(f"[ERRO] Falha com {addr}: {e}")

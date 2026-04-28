@@ -45,10 +45,29 @@ def enviar_heartbeat():
                 res = json.loads(data.strip())
                 print(f"[LOG] Resposta do Master: {json.dumps(res)}") # DoD Sucesso [cite: 81, 94]
                 
-                # Processa resposta conforme o tipo de tarefa
                 if res.get("TASK") == "QUERY":
                     user = res.get("USER")
                     print(f"[TASK] Executando tarefa para: {user}")
+                    try:
+                        time.sleep(1)
+                        resultado = {
+                            "STATUS": "OK",
+                            "TASK": "QUERY",
+                            "WORKER_UUID": WORKER_UUID
+                        }
+                    except Exception:
+                        resultado = {
+                            "STATUS": "NOK",
+                            "TASK": "QUERY",
+                            "WORKER_UUID": WORKER_UUID
+                        }
+
+                    s.sendall((json.dumps(resultado) + "\n").encode('utf-8'))
+
+                    ack_data = s.recv(1024).decode('utf-8')
+                    if ack_data:
+                        ack = json.loads(ack_data.strip())
+                        print(f"[LOG] ACK do Master: {json.dumps(ack)}")
                 elif res.get("TASK") == "NO_TASK":
                     print(f"[INFO] Nenhuma tarefa disponível no momento")
             
