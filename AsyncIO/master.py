@@ -22,6 +22,7 @@ def input_task_cli(loop):
     global accepting_tasks
     while True:
         try:
+            #TODO: Alterar input para getvenv(.env=NUM_TASKS)
             user_input = input("[MASTER CLI] Digite 'add_task <user_name>', 'delete_task', 'clear', 'stop' ou 'list': ")
 
             if user_input.startswith("add_task "):
