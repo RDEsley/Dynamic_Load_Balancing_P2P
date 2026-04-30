@@ -2,19 +2,11 @@ import asyncio
 import json
 import socket
 
-HOST = ''
+HOST = '10.62.217.31'
 PORT = 8000
 SERVER_UUID = "Master_3"
 WORKER_UUID = "Worker_1"  # Hardcoded - Único para este worker
 INTERVALO = 30 # Segundos entre verificações
-
-def is_remote_worker():
-    """Verifica se o Worker está em IP diferente do Master"""
-    try:
-        local_ip = socket.gethostbyname(socket.gethostname())
-        return local_ip != HOST
-    except:
-        return False
 
 async def enviar_heartbeat():
     while True:
@@ -25,12 +17,9 @@ async def enviar_heartbeat():
             # Novo Payload - WORKER alive signal
             payload = {
                 "WORKER": "ALIVE",
-                "WORKER_UUID": WORKER_UUID
+                "WORKER_UUID": WORKER_UUID,
+                "SERVER_UUID": SERVER_UUID
             }
-            
-            # Adiciona SERVER_UUID se for Worker remoto
-            if is_remote_worker():
-                payload["SERVER_UUID"] = SERVER_UUID
             
             # Log do payload antes de enviar
             print(f"[LOG] Enviando payload: {json.dumps(payload)}")

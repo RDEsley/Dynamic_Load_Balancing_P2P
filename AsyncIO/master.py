@@ -2,7 +2,7 @@ import asyncio
 import json
 from collections import deque
 
-HOST = ''
+HOST = '10.62.217.31'
 PORT = 8000
 SERVER_UUID = "Master_3"
 
@@ -101,7 +101,7 @@ async def tratar_worker(reader, writer):
                     print(f"[ERRO] Payload ALIVE inválido ignorado de {addr}")
                     continue
 
-                is_remote = "SERVER_UUID" in payload
+                is_remote = payload.get("SERVER_UUID") != SERVER_UUID
 
                 async with queue_lock:
                     if task_queue:
