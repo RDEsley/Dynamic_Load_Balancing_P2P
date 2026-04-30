@@ -1,6 +1,6 @@
 import asyncio
 import json
-import socket
+import random
 
 HOST = '10.62.217.31'
 PORT = 8000
@@ -34,20 +34,28 @@ async def enviar_heartbeat():
                 print(f"[LOG] Resposta do Master: {json.dumps(res)}")
 
                 if res.get("TASK") == "QUERY":
-                    print(f"[TASK] Processando tarefa para USER={res.get('USER')}")
-                    try:
-                        await asyncio.sleep(1)
-                        resultado = {
-                            "STATUS": "OK",
-                            "TASK": "QUERY",
-                            "WORKER_UUID": WORKER_UUID
-                        }
-                    except Exception:
+                    if random.random() < 0.5:
+                        print(f"[TASK] Worker ocupado, recusando tarefa para USER={res.get('USER')}")
                         resultado = {
                             "STATUS": "NOK",
                             "TASK": "QUERY",
                             "WORKER_UUID": WORKER_UUID
                         }
+                    else:
+                        print(f"[TASK] Processando tarefa para USER={res.get('USER')}")
+                        try:
+                            await asyncio.sleep(1)
+                            resultado = {
+                                "STATUS": "OK",
+                                "TASK": "QUERY",
+                                "WORKER_UUID": WORKER_UUID
+                            }
+                        except Exception:
+                            resultado = {
+                                "STATUS": "NOK",
+                                "TASK": "QUERY",
+                                "WORKER_UUID": WORKER_UUID
+                            }
 
                     writer.write((json.dumps(resultado) + "\n").encode())
                     await writer.drain()
