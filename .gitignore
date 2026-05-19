@@ -38,6 +38,9 @@ logs/
 .vscode/
 .idea/
 
+# Local git worktrees
+.worktrees/
+
 # OS generated files
 .DS_Store
 Thumbs.db
