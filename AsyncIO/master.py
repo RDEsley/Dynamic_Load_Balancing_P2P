@@ -1,14 +1,38 @@
 import asyncio
 import json
+import os
 from collections import deque
 
-HOST = '10.62.217.31'
+HOST = '192.168.0.77'
 PORT = 8000
 SERVER_UUID = "Master_3"
 
 task_queue = deque()
 queue_lock = asyncio.Lock()
 accepting_tasks = True
+
+
+def read_num_tasks_from_env(path=".env"):
+    """Read NUM_TASKS from a simple .env file. Returns int or None."""
+    try:
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                if k.strip() == "NUM_TASKS":
+                    try:
+                        return int(v.strip())
+                    except ValueError:
+                        return None
+    except Exception:
+        return None
+    return None
 
 
 def validar_payload(payload, campos_obrigatorios):
@@ -150,7 +174,15 @@ async def iniciar_master():
     loop = asyncio.get_running_loop()
     input_thread = __import__("threading").Thread(target=input_task_cli, args=(loop,), daemon=True)
     input_thread.start()
-
+    # Populate initial tasks from .env if present (NUM_TASKS)
+    # Try module-local .env then workspace .env
+    module_env = os.path.join(os.path.dirname(__file__), "..", ".env")
+    workspace_env = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    num = read_num_tasks_from_env(module_env) or read_num_tasks_from_env(workspace_env)
+    if num and isinstance(num, int) and num > 0:
+        print(f"[STARTUP] Populando fila com {num} tarefas a partir de .env")
+        for i in range(1, num + 1):
+            await enqueue_task(f"user_{i}")
     server = await asyncio.start_server(tratar_worker, HOST, PORT)
     print(f"Master {SERVER_UUID} (AsyncIO) ativo em {HOST}:{PORT}")
     print("[INFO] Digite 'add_task <user_name>' para adicionar tarefas, 'delete_task' para remover a primeira, 'clear' para limpar, 'stop' para parar novas entradas e 'list' para listar")

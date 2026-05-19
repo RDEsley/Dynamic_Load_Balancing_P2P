@@ -2,7 +2,7 @@ import asyncio
 import json
 import random
 
-HOST = '10.62.217.31'
+HOST = '192.168.0.77'
 PORT = 8000
 SERVER_UUID = "Master_3"
 WORKER_UUID = "Worker_1"  # Hardcoded - Único para este worker
