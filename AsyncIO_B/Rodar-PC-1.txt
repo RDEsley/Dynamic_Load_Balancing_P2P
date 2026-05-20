@@ -1,0 +1,18 @@
+Pasta do Master B (vizinho) + Worker B1
+=====================================
+
+1. Abra UM terminal nesta pasta (AsyncIO_B).
+
+2. Master B:
+   python master.py
+
+   Deve aparecer: Master Master_B ... ativo em 0.0.0.0:8001
+
+3. Abra OUTRO terminal, mesma pasta AsyncIO_B.
+
+4. Worker:
+   python worker.py
+
+   Deve conectar em 192.168.1.15:8001
+
+Ordem: sempre Master B antes do Worker.

@@ -20,7 +20,7 @@ from protocol import (
     validate_payload,
 )
 
-HOST = ""
+HOST = "0.0.0.0"
 PORT = 8000
 SERVER_UUID = "Master_3"
 MASTER_ID = "A"

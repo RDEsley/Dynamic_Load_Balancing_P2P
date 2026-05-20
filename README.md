@@ -170,6 +170,37 @@ Iniciando Worker (AsyncIO)...
 [LOG] ACK do Master: {"STATUS": "ACK", "WORKER_UUID": "Worker_1"}
 ```
 
+
+---
+
+### Configuração via `.env` (pasta `AsyncIO`)
+
+Copie `AsyncIO/.env.example` para `AsyncIO/.env` e ajuste IP/portas.
+
+**Master B (vizinho — recebe pedidos de outras equipes):**
+
+```env
+HOST=0.0.0.0
+PORT=8001
+MASTER_ID=B
+CAPACITY=100
+NUM_TASKS=0
+NEIGHBOR_MASTERS=A=IP_DO_OUTRO_MASTER:8000
+```
+
+**Master A (saturado — `NUM_TASKS` deve ser maior que `CAPACITY`, ex.: 120 > 100):**
+
+```env
+HOST=0.0.0.0
+PORT=8000
+MASTER_ID=A
+CAPACITY=100
+NUM_TASKS=120
+NEIGHBOR_MASTERS=B=IP_DO_SEU_MASTER_B:8001
+```
+
+**Worker (mesma pasta do Master B):** use `MASTER_HOST` + `PORT=8001` no `.env` (ver `.env.example`).
+
 ---
 
 ### 🧵 Versão com Threads
