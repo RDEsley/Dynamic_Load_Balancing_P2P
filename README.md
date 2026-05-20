@@ -304,6 +304,70 @@ O segundo sprint adiciona a fila de tarefas no Master e o ciclo completo de proc
 
 ---
 
+<details>
+<summary><strong>🤝 Sprint 03 — Master-to-Master Help (Empréstimo Temporário de Workers)</strong></summary>
+
+Este sprint introduz um protocolo de cooperação entre Masters: quando um Master A está saturado ele pode solicitar temporariamente Workers de um Master vizinho B. A comunicação segue o envelope JSON newline-delimited e campos de controle em CAIXA ALTA.
+
+Fluxo resumido:
+
+- Master A envia a Master B:
+
+```json
+{"TYPE":"REQUEST_HELP","REQUEST_ID":"UUID","PAYLOAD":{"MASTER_ID":"A","CURRENT_LOAD":80,"CAPACITY":100,"WORKERS_NEEDED":2}}
+```
+
+- Master B responde no mesmo socket com `RESPONSE_ACCEPTED` ou `RESPONSE_REJECTED` preservando o `REQUEST_ID`:
+
+Resposta aceita (normaliza detalhes de worker):
+
+```json
+{"TYPE":"RESPONSE_ACCEPTED","REQUEST_ID":"UUID","PAYLOAD":{"WORKERS_OFFERED":2,"WORKER_DETAILS":[{"ID":"B1","ADDRESS":"IP:PORT"}]}}
+```
+
+Resposta rejeitada:
+
+```json
+{"TYPE":"RESPONSE_REJECTED","REQUEST_ID":"UUID","PAYLOAD":{"REASON":"NO_WORKERS_AVAILABLE"}}
+```
+
+- Em caso de `RESPONSE_ACCEPTED`, o Master B envia `COMMAND_REDIRECT` aos Workers selecionados:
+
+```json
+{"TYPE":"COMMAND_REDIRECT","REQUEST_ID":"UUID","PAYLOAD":{"NEW_MASTER_ADDRESS":"IP_MASTER_A:PORT"}}
+```
+
+- O Worker conecta-se então a Master A e envia o registro temporário:
+
+```json
+{"TYPE":"REGISTER_TEMPORARY_WORKER","REQUEST_ID":"UUID","PAYLOAD":{"WORKER_ID":"B1","ORIGINAL_MASTER_ADDRESS":"IP_MASTER_B:PORT"}}
+```
+
+- Durante o período temporário o Worker opera normalmente (TASK/STATUS/ACK). Quando Master A normaliza, ele envia `COMMAND_RELEASE` ao Worker e `NOTIFY_WORKER_RETURNED` a Master B (ambos com `REQUEST_ID`):
+
+```json
+{"TYPE":"COMMAND_RELEASE","REQUEST_ID":"UUID","PAYLOAD":{"ORIGINAL_MASTER_ADDRESS":"IP_MASTER_B:PORT"}}
+
+{"TYPE":"NOTIFY_WORKER_RETURNED","REQUEST_ID":"UUID","PAYLOAD":{"WORKER_ID":"B1"}}
+```
+
+Decisões importantes:
+
+- Todos os envelopes usam `TYPE`/`REQUEST_ID`/`PAYLOAD` e valores de controle em maiúsculas.
+- `RESPONSE_ACCEPTED` normaliza `WORKER_DETAILS` para objetos com `ID` e `ADDRESS`.
+- Os `REQUEST_ID` devem ser preservados para correlação.
+- Masters tentam 3 tentativas de `NOTIFY_WORKER_RETURNED` antes de logar falha final.
+
+Definição de Pronto (DoD):
+
+- [x] `REQUEST_HELP`/`RESPONSE_*` implementados com validação de payload
+- [x] `COMMAND_REDIRECT` e `REGISTER_TEMPORARY_WORKER` suportados
+- [x] Worker aceita redirect e registra-se temporariamente
+- [x] `COMMAND_RELEASE` e `NOTIFY_WORKER_RETURNED` executam liberação e notificação
+- [ ] Testes de integração end-to-end cobrindo todo o ciclo
+
+</details>
+
 ## 🧩 Decisões de Design
 
 <details>
