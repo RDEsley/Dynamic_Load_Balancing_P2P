@@ -47,9 +47,9 @@ A comunicação entre Master e Worker segue um **protocolo JSON fixo**, pensado 
 | O1 | **Arquitetura P2P** | Criar um nó Master capaz de gerenciar (iniciar, parar, monitorar) um conjunto de Workers |
 | O2 | **Simulação de Carga** | Desenvolver mecanismo para simular requisições com monitoramento de carga |
 | O3 | **Monitoramento de Saturação** | O Master identifica quando requisições excedem um limiar (*threshold*) |
-| O4 | **Fila de Tarefas** | Manter uma fila FIFO de tarefas pendentes no Master |
-| O5 | **Entrega e Confirmação** | Enviar tarefa ao Worker, receber resultado e confirmar com ACK |
-| O6 | **Autonomia e Interoperabilidade** | Operar com sistemas de outras equipes via protocolo definido |
+| O4 | **Protocolo Consensual M2M** | Masters saturados negociam ajuda com vizinhos via `REQUEST_HELP` / `RESPONSE_*` |
+| O5 | **Redirecionamento Dinâmico** | Workers são redirecionados temporariamente com `COMMAND_REDIRECT` e devolvidos com `COMMAND_RELEASE` |
+| O6 | **Autonomia e Interoperabilidade** | Operar com sistemas de outras equipes via protocolo JSON definido |
 
 ---
 
@@ -63,16 +63,16 @@ A comunicação entre Master e Worker segue um **protocolo JSON fixo**, pensado 
 ```
 
 ### 🖥️ Nó Master
-- Recebe e gerencia tarefas em uma fila FIFO interna
-- Distribui tarefas aos Workers por conexão TCP
-- Ignora campos desconhecidos no JSON, mas exige os campos obrigatórios do protocolo
-- Confirma o recebimento do resultado do Worker com `STATUS = "ACK"`
+- Recebe Workers e outros Masters na mesma porta TCP (envelope `TYPE` vs. Sprint 2)
+- Gerencia fila FIFO, saturação (`CAPACITY`) e histerese de devolução (60% da capacidade)
+- Negocia empréstimo de Workers com Masters vizinhos (`NEIGHBOR_MASTERS` no `.env`)
+- Confirma resultados com `STATUS = "ACK"` e libera Workers emprestados quando a carga normaliza
 
 ### ⚙️ Nó Worker
-- Solicita tarefas ao Master por meio de heartbeat/alive signal
-- Processa a tarefa simulando execução com espera aleatória ou cálculo
-- Responde com `STATUS = "OK"` ou `STATUS = "NOK"`
-- Aguarda o ACK do Master antes de considerar o ciclo concluído
+- Mantém conexão TCP persistente com o Master (Sprint 3)
+- Solicita tarefas com `WORKER: ALIVE` (sem `SERVER_UUID` se local; com `SERVER_UUID` se emprestado)
+- Processa `QUERY`, responde `OK`/`NOK` e aguarda `ACK`
+- Trata `COMMAND_REDIRECT` e `COMMAND_RELEASE` do protocolo M2M
 
 ### 🔌 Protocolo de Comunicação
 - Comunicação via **TCP** com mensagens JSON delimitadas por `\n`
@@ -88,16 +88,14 @@ A comunicação entre Master e Worker segue um **protocolo JSON fixo**, pensado 
 Dynamic_Load_Balancing_P2P/
 │
 ├── 📂 AsyncIO/
-│   ├── master.py          # Master com asyncio (não-bloqueante)
-│   └── worker.py          # Worker com asyncio
+│   ├── master.py          # Master com asyncio (Sprint 2 + 3)
+│   ├── worker.py          # Worker com conexão persistente (Sprint 2 + 3)
+│   └── protocol.py        # Envelopes M2M e builders (Sprint 3)
 │
-├── 📂 Thread/
-│   ├── master.py          # Master com threading
-│   └── worker.py          # Worker com socket bloqueante
-│
-├── 📂 ModeloInicial/
-│   ├── server.py          # Referência do professor (Sprint 1)
-│   └── client.py
+├── 📂 tests/
+│   ├── test_protocol.py
+│   ├── test_master_m2m.py
+│   └── test_worker_redirect.py
 │
 ├── 📄 README.md
 └── 📄 LICENSE
@@ -302,6 +300,87 @@ O segundo sprint adiciona a fila de tarefas no Master e o ciclo completo de proc
 
 </details>
 
+<details>
+<summary><strong>🤝 Sprint 3 — Protocolo Master-to-Master e Redirecionamento</strong></summary>
+
+Quando a fila do Master A excede `CAPACITY` (padrão 100), o monitor de saturação envia `REQUEST_HELP` aos Masters vizinhos. O Master B avalia carga e Workers ociosos e responde com `RESPONSE_ACCEPTED` ou `RESPONSE_REJECTED` (mesmo `REQUEST_ID`). Após aceite, B envia `COMMAND_REDIRECT` aos Workers; eles registram-se no A com `REGISTER_TEMPORARY_WORKER` e passam a operar o ciclo da Sprint 2 com `SERVER_UUID` do Master de origem. Quando a carga normaliza (histerese: 3 amostras &lt; 60% da capacidade), A emite `COMMAND_RELEASE` e `NOTIFY_WORKER_RETURNED`.
+
+**Envelope M2M (campos em CAIXA ALTA):**
+
+```json
+{
+  "TYPE": "REQUEST_HELP",
+  "REQUEST_ID": "UUID-V4",
+  "PAYLOAD": { "MASTER_ID": "A", "CURRENT_LOAD": 150, "CAPACITY": 100, "WORKERS_NEEDED": 2 }
+}
+```
+
+| TYPE | Direção | Finalidade |
+|:---|:---|:---|
+| `REQUEST_HELP` | Master A → B | Pedido de Workers emprestados |
+| `RESPONSE_ACCEPTED` | B → A | Aceite + `WORKER_DETAILS` |
+| `RESPONSE_REJECTED` | B → A | Recusa (`HIGH_LOAD`, `NO_WORKERS_AVAILABLE`, `REFUSED`) |
+| `COMMAND_REDIRECT` | B → Worker | Ordena conexão ao Master saturado |
+| `REGISTER_TEMPORARY_WORKER` | Worker → A | Registro como emprestado |
+| `COMMAND_RELEASE` | A → Worker | Devolve ao Master original |
+| `NOTIFY_WORKER_RETURNED` | A → B | Atualiza Farm do B |
+
+**Exemplo `.env` (dois Masters na mesma rede):**
+
+```env
+# Master A (porta 8000, saturado)
+HOST=0.0.0.0
+PORT=8000
+MASTER_ID=A
+SERVER_UUID=Master_A
+NEIGHBOR_MASTERS=B=192.168.0.10:8001
+NUM_TASKS=120
+
+# Master B (porta 8001, vizinho)
+HOST=0.0.0.0
+PORT=8001
+MASTER_ID=B
+SERVER_UUID=Master_B
+NEIGHBOR_MASTERS=A=192.168.0.10:8000
+
+# Worker do Master B
+HOST=192.168.0.10
+PORT=8001
+WORKER_UUID=Worker_B1
+ORIGINAL_MASTER_ID=B
+```
+
+**Demo rápida:**
+
+```bash
+# Terminal 1 — Master B
+cd AsyncIO
+python master.py
+
+# Terminal 2 — Worker B1
+cd AsyncIO
+python worker.py
+
+# Terminal 3 — Master A (fila grande via NUM_TASKS)
+cd AsyncIO
+python master.py
+```
+
+**Testes automatizados:**
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+**Definição de Pronto (DoD):**
+- [x] Master saturado envia `REQUEST_HELP` e correlaciona `REQUEST_ID` na resposta
+- [x] Master vizinho aceita/recusa e redireciona Workers via `COMMAND_REDIRECT`
+- [x] Worker emprestado registra-se e opera com `SERVER_UUID`
+- [x] Devolução com `COMMAND_RELEASE` + `NOTIFY_WORKER_RETURNED` quando carga normaliza
+- [x] Tipos desconhecidos são logados e ignorados sem derrubar o processo
+
+</details>
+
 ---
 
 <details>
@@ -415,6 +494,20 @@ O sistema foi projetado para operar com implementações de outras equipes. Para
 | CT03 | Fila vazia | `{"WORKER":"ALIVE","WORKER_UUID":"W-123"}` | `{"TASK":"NO_TASK"}` | Master responde corretamente |
 | CT04 | Reporte de sucesso | `{"STATUS":"OK","TASK":"QUERY",...}` | `{"STATUS":"ACK"}` | Master libera o Worker com ACK |
 | CT05 | Reporte de falha | `{"STATUS":"NOK","TASK":"QUERY",...}` | `{"STATUS":"ACK"}` | Master registra falha e confirma recebimento |
+
+### Sprint 3 — Master-to-Master
+
+| ID | Cenário | Critério de Sucesso |
+|:---:|:---|:---|
+| CT01 | Pedido aceito | `RESPONSE_ACCEPTED` + `COMMAND_REDIRECT` aos Workers |
+| CT02 | Pedido recusado | `RESPONSE_REJECTED` com `HIGH_LOAD`, sem redirect |
+| CT03 | Correlação | Cada resposta repete o `REQUEST_ID` da requisição |
+| CT04 | Registro emprestado | `REGISTER_TEMPORARY_WORKER` + ALIVE com `SERVER_UUID` |
+| CT05 | Tarefa em Worker emprestado | QUERY/ACK com log REMOTO |
+| CT06 | Devolução | `COMMAND_RELEASE` + `NOTIFY_WORKER_RETURNED` + reconexão no B |
+| CT07 | Timeout 5s | Solicitante tenta próximo vizinho ou aborta |
+| CT08 | Queda do Master A | Worker emprestado reconecta ao B |
+| CT09 | Tipo desconhecido | Log + processo continua |
 
 ---
 
