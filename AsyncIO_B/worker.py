@@ -10,8 +10,8 @@ from protocol import (
     new_request_id,
 )
 
-HOST = "192.168.1.15"
-PORT = 8000
+HOST = "0.0.0.0"
+PORT = 8001
 ORIGINAL_MASTER_ID = "B"
 WORKER_UUID = "Worker_1"
 INTERVALO_NO_TASK = 5
