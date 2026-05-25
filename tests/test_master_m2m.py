@@ -72,7 +72,7 @@ class TestMasterHelpers(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(m.is_normalized([70, 65], m.RELEASE_THRESHOLD))
         self.assertTrue(m.is_normalized([50, 55, 58], m.RELEASE_THRESHOLD))
 
-    async def test_alive_no_task_borrowed_worker_triggers_release_check(self):
+    async def test_normalized_load_releases_idle_temporary_worker(self):
         import master as m
 
         class DummyWriter:
@@ -92,6 +92,7 @@ class TestMasterHelpers(unittest.IsolatedAsyncioTestCase):
         m.connected_workers.clear()
         m.temporary_workers.clear()
         m.load_samples.clear()
+        m.load_samples.extend([50, 55, 58])
 
         writer = DummyWriter()
         worker_id = "WB1"
@@ -109,16 +110,10 @@ class TestMasterHelpers(unittest.IsolatedAsyncioTestCase):
         release_spy = AsyncMock()
         m.maybe_release_temporary_worker = release_spy
         try:
-            handled = await m.tratar_sprint02(
-                {"WORKER": "ALIVE", "WORKER_UUID": worker_id, "SERVER_UUID": "B"},
-                object(),
-                writer,
-                ("127.0.0.1", 9001),
-            )
+            await m.release_normalized_temporary_workers()
         finally:
             m.maybe_release_temporary_worker = original_release
 
-        self.assertTrue(handled)
         release_spy.assert_awaited_once_with(worker_id, writer)
 
 

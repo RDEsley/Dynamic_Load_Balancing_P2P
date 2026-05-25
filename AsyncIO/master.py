@@ -20,8 +20,8 @@ from protocol import (
     validate_payload,
 )
 
-HOST = "0.0.0.0"
-PORT = 8000
+HOST = "192.168.15.19"
+PORT = 8001
 SERVER_UUID = "Master_3"
 MASTER_ID = "A"
 CAPACITY = 100
@@ -292,13 +292,30 @@ async def send_redirect_commands(worker_details: list[dict], new_master_address:
 
 
 async def notify_worker_returned_to_master(worker_id: str, original_master_address: str):
+    # original_master_address pode ser um 'host:port' ou um identificador de master.
+    addr_to_try = None
+    if isinstance(original_master_address, str) and ":" in original_master_address:
+        addr_to_try = original_master_address
+    else:
+        # Tentar mapear via neighbor_masters
+        if original_master_address in neighbor_masters:
+            addr_to_try = neighbor_masters[original_master_address]
+        else:
+            # Verificar se algum valor de neighbor_masters contém o identificador
+            for nid, naddr in neighbor_masters.items():
+                if original_master_address == nid or (isinstance(naddr, str) and original_master_address in naddr):
+                    addr_to_try = naddr
+                    break
+
     for attempt in range(1, 4):
         try:
-            host, port_str = original_master_address.rsplit(":", 1)
+            if not addr_to_try:
+                raise ValueError(f"Endereço original do master desconhecido: {original_master_address}")
+            host, port_str = addr_to_try.rsplit(":", 1)
             _reader, writer = await asyncio.open_connection(host, int(port_str))
             notify = build_notify_worker_returned(new_request_id(), worker_id)
             ts = time.strftime("%H:%M:%S")
-            print(f"[M2M] {ts} EMIT NOTIFY_WORKER_RETURNED worker={worker_id} -> {original_master_address}")
+            print(f"[M2M] {ts} EMIT NOTIFY_WORKER_RETURNED worker={worker_id} -> {addr_to_try}")
             writer.write(encode_line(notify))
             await writer.drain()
             writer.close()
@@ -308,23 +325,24 @@ async def notify_worker_returned_to_master(worker_id: str, original_master_addre
             print(f"[ERRO] NOTIFY_WORKER_RETURNED {worker_id} tentativa {attempt}/3: {e}")
 
 
-async def maybe_release_temporary_worker(worker_id: str, worker_writer):
+async def maybe_release_temporary_worker(worker_id: str, worker_writer, force: bool = False):
     async with workers_lock:
         original_master_address = temporary_workers.get(worker_id)
     if not original_master_address:
-        return
-    if not is_normalized(list(load_samples), RELEASE_THRESHOLD):
-        return
+        print(f"[M2M] maybe_release: worker {worker_id} não é temporário")
+        return False
 
     release = build_command_release(new_request_id(), original_master_address)
     ts = time.strftime("%H:%M:%S")
-    print(f"[M2M] {ts} EMIT COMMAND_RELEASE worker={worker_id}")
+    print(f"[M2M] {ts} EMIT COMMAND_RELEASE worker={worker_id} -> {original_master_address}")
     try:
         notify_task = asyncio.create_task(
             notify_worker_returned_to_master(worker_id, original_master_address)
         )
+        # Envia o comando de release para o worker
         worker_writer.write(encode_line(release))
         await worker_writer.drain()
+
         await notify_task
         async with workers_lock:
             temporary_workers.pop(worker_id, None)
@@ -332,8 +350,26 @@ async def maybe_release_temporary_worker(worker_id: str, worker_writer):
                 connected_workers[worker_id]["temporary"] = False
         print(f"[EMPRESTIMO] Ciclo encerrado: devolução de {worker_id} para {original_master_address}")
         log_worker_counts("Devolução concluída")
+        return True
     except Exception as e:
         print(f"[ERRO] Falha ao liberar worker temporário {worker_id}: {e}")
+        return False
+
+
+async def release_normalized_temporary_workers():
+    if not temporary_workers or not is_normalized(list(load_samples), RELEASE_THRESHOLD):
+        return
+
+    async with workers_lock:
+        release_candidates = [
+            (worker_id, metadata.get("writer"))
+            for worker_id, metadata in connected_workers.items()
+            if metadata.get("temporary") and not metadata.get("busy") and metadata.get("writer")
+        ]
+
+    for worker_id, worker_writer in release_candidates:
+        await maybe_release_temporary_worker(worker_id, worker_writer)
+
 
 
 def calc_workers_needed(current_load: int) -> int:
@@ -407,6 +443,8 @@ async def saturation_monitor():
         async with queue_lock:
             current_load = len(task_queue)
         load_samples.append(current_load)
+
+        await release_normalized_temporary_workers()
 
         if current_load <= CAPACITY:
             continue
@@ -484,6 +522,19 @@ async def tratar_m2m(payload: dict, reader, writer, addr) -> bool:
 async def tratar_sprint02(payload: dict, reader, writer, addr) -> bool:
     msg_type = get_message_type(payload)
 
+    # Responde HEARTBEAT do worker
+    if payload.get("TASK") == "HEARTBEAT":
+        worker_uuid = payload.get("SERVER_UUID")
+        if worker_uuid:
+            resposta = {"SERVER_UUID": SERVER_UUID, "TASK": "HEARTBEAT", "RESPONSE": "ALIVE"}
+            try:
+                writer.write(encode_line(resposta))
+                await writer.drain()
+                print(f"[HEARTBEAT] Respondido para worker {worker_uuid}: {SERVER_UUID}")
+            except Exception as e:
+                print(f"[ERRO] Falha ao responder HEARTBEAT para {worker_uuid}: {e}")
+        return True
+
     if msg_type == "REGISTER_TEMPORARY_WORKER":
         if not validate_envelope(payload) or not validate_payload(
             payload.get("PAYLOAD", {}),
@@ -548,7 +599,6 @@ async def tratar_sprint02(payload: dict, reader, writer, addr) -> bool:
 
         writer.write(encode_line(resposta))
         await writer.drain()
-        await maybe_release_temporary_worker(worker_uuid, writer)
         return True
 
     if payload.get("STATUS") in ("OK", "NOK") and payload.get("TASK") == "QUERY":
@@ -571,8 +621,6 @@ async def tratar_sprint02(payload: dict, reader, writer, addr) -> bool:
         writer.write(encode_line(ack))
         await writer.drain()
         print(f"[ACK] Enviado para {worker_uuid}")
-
-        await maybe_release_temporary_worker(worker_uuid, writer)
         return True
 
     return False
