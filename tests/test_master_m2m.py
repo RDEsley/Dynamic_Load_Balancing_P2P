@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import AsyncMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "AsyncIO"))
 
@@ -70,6 +71,55 @@ class TestMasterHelpers(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(m.is_normalized([70, 65], m.RELEASE_THRESHOLD))
         self.assertTrue(m.is_normalized([50, 55, 58], m.RELEASE_THRESHOLD))
+
+    async def test_alive_no_task_borrowed_worker_triggers_release_check(self):
+        import master as m
+
+        class DummyWriter:
+            def __init__(self):
+                self.buffer = []
+
+            def write(self, data):
+                self.buffer.append(data)
+
+            async def drain(self):
+                return None
+
+            def get_extra_info(self, _name):
+                return ("127.0.0.1", 9999)
+
+        m.task_queue.clear()
+        m.connected_workers.clear()
+        m.temporary_workers.clear()
+        m.load_samples.clear()
+
+        writer = DummyWriter()
+        worker_id = "WB1"
+        m.connected_workers[worker_id] = {
+            "reader": object(),
+            "writer": writer,
+            "address": "127.0.0.1:9001",
+            "temporary": True,
+            "busy": False,
+            "peer": ("127.0.0.1", 9001),
+        }
+        m.temporary_workers[worker_id] = "127.0.0.1:8001"
+
+        original_release = m.maybe_release_temporary_worker
+        release_spy = AsyncMock()
+        m.maybe_release_temporary_worker = release_spy
+        try:
+            handled = await m.tratar_sprint02(
+                {"WORKER": "ALIVE", "WORKER_UUID": worker_id, "SERVER_UUID": "B"},
+                object(),
+                writer,
+                ("127.0.0.1", 9001),
+            )
+        finally:
+            m.maybe_release_temporary_worker = original_release
+
+        self.assertTrue(handled)
+        release_spy.assert_awaited_once_with(worker_id, writer)
 
 
 if __name__ == "__main__":

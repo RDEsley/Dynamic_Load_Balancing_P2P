@@ -548,6 +548,7 @@ async def tratar_sprint02(payload: dict, reader, writer, addr) -> bool:
 
         writer.write(encode_line(resposta))
         await writer.drain()
+        await maybe_release_temporary_worker(worker_uuid, writer)
         return True
 
     if payload.get("STATUS") in ("OK", "NOK") and payload.get("TASK") == "QUERY":
