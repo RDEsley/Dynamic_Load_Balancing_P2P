@@ -122,13 +122,41 @@ async def async_decide_help_response(req_payload: dict) -> dict:
             ):
                 available.append({"ID": worker_id, "ADDRESS": metadata["address"]})
 
-    if needed <= 0 or len(available) < needed:
+    # Debug: mostrar estado dos workers ao avaliar pedido de ajuda
+    try:
+        print(f"[M2M DEBUG] connected_workers={list(connected_workers.keys())}")
+        print(f"[M2M DEBUG] available_candidates={available} needed={needed}")
+    except Exception:
+        pass
+
+    if needed <= 0:
+        print(f"[M2M] Rejeitando HELP: invalid needed={needed}")
+        return {
+            "ACCEPTED": False,
+            "REASON": "REFUSED",
+            "WORKER_DETAILS": [],
+            "NEW_MASTER_ADDRESS": None,
+        }
+
+    # If there are no idle local workers, refuse. Otherwise offer whatever we have
+    # (allow partial fulfilment — e.g. offer 1 worker even if more were requested).
+    if len(available) == 0:
+        print(f"[M2M] Rejeitando HELP: needed={needed} available=0")
         return {
             "ACCEPTED": False,
             "REASON": "NO_WORKERS_AVAILABLE",
             "WORKER_DETAILS": [],
             "NEW_MASTER_ADDRESS": None,
         }
+
+    offered_count = min(len(available), needed)
+    print(f"[M2M] Aceitando HELP parcialmente: offering={offered_count} requested={needed}")
+    return {
+        "ACCEPTED": True,
+        "REASON": None,
+        "WORKER_DETAILS": available[:offered_count],
+        "NEW_MASTER_ADDRESS": new_master_address,
+    }
 
     return {
         "ACCEPTED": True,
@@ -356,21 +384,6 @@ async def maybe_release_temporary_worker(worker_id: str, worker_writer, force: b
         return False
 
 
-async def release_normalized_temporary_workers():
-    if not temporary_workers or not is_normalized(list(load_samples), RELEASE_THRESHOLD):
-        return
-
-    async with workers_lock:
-        release_candidates = [
-            (worker_id, metadata.get("writer"))
-            for worker_id, metadata in connected_workers.items()
-            if metadata.get("temporary") and not metadata.get("busy") and metadata.get("writer")
-        ]
-
-    for worker_id, worker_writer in release_candidates:
-        await maybe_release_temporary_worker(worker_id, worker_writer)
-
-
 
 def calc_workers_needed(current_load: int) -> int:
     excess = max(0, current_load - CAPACITY)
@@ -444,8 +457,6 @@ async def saturation_monitor():
             current_load = len(task_queue)
         load_samples.append(current_load)
 
-        await release_normalized_temporary_workers()
-
         if current_load <= CAPACITY:
             continue
 
@@ -500,6 +511,41 @@ async def tratar_m2m(payload: dict, reader, writer, addr) -> bool:
             writer.write(encode_line(response))
             await writer.drain()
             print(f"[M2M] {ts} EMIT RESPONSE_REJECTED REQUEST_ID={request_id} REASON={decision['REASON']}")
+        return True
+
+    if msg_type == "RELEASE_REQUEST":
+        if not validate_envelope(payload) or not validate_payload(
+            payload.get("PAYLOAD", {}),
+            {"WORKER_IDS", "ORIGINAL_MASTER_ADDRESS"},
+        ):
+            print(f"[ERRO] RELEASE_REQUEST inválido de {addr}")
+            return True
+
+        request_id = payload["REQUEST_ID"]
+        worker_ids = payload.get("PAYLOAD", {}).get("WORKER_IDS", [])
+        original_master = payload.get("PAYLOAD", {}).get("ORIGINAL_MASTER_ADDRESS")
+        print(f"[M2M] {ts} RECV RELEASE_REQUEST REQUEST_ID={request_id} workers={worker_ids} origin={original_master}")
+        
+        # Enviar COMMAND_RELEASE para cada worker solicitado
+        for worker_id in worker_ids:
+            async with workers_lock:
+                metadata = connected_workers.get(worker_id, {})
+                worker_writer = metadata.get("writer")
+            
+            if worker_writer:
+                try:
+                    release_cmd = build_command_release(new_request_id(), original_master)
+                    worker_writer.write(encode_line(release_cmd))
+                    await worker_writer.drain()
+                    print(f"[M2M] {ts} EMIT COMMAND_RELEASE worker={worker_id} -> {original_master}")
+                except Exception as e:
+                    print(f"[ERRO] Falha ao enviar COMMAND_RELEASE para {worker_id}: {e}")
+        
+        # Responder ACK ao servidor
+        ack_response = {"TYPE": "RELEASE_ACK", "REQUEST_ID": request_id}
+        writer.write(encode_line(ack_response))
+        await writer.drain()
+        print(f"[M2M] {ts} EMIT RELEASE_ACK REQUEST_ID={request_id}")
         return True
 
     if msg_type == "NOTIFY_WORKER_RETURNED":
@@ -621,6 +667,22 @@ async def tratar_sprint02(payload: dict, reader, writer, addr) -> bool:
         writer.write(encode_line(ack))
         await writer.drain()
         print(f"[ACK] Enviado para {worker_uuid}")
+
+        # Debug: mostrar estado temporário antes de tentar liberar
+        async with workers_lock:
+            orig = temporary_workers.get(worker_uuid)
+            print(f"[DEBUG] temporary_workers[{worker_uuid}] = {orig}")
+
+        released = await maybe_release_temporary_worker(worker_uuid, writer, force=True)
+
+        if released:
+            # fechar a conexão com o worker após devolver
+            try:
+                print(f"[M2M] Fechando conexão com worker {worker_uuid} após devolução")
+                writer.close()
+                await writer.wait_closed()
+            except Exception as e:
+                print(f"[ERRO] Falha ao fechar conexão de {worker_uuid}: {e}")
         return True
 
     return False
