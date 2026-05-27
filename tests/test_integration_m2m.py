@@ -78,6 +78,141 @@ class TestIntegrationM2M(unittest.IsolatedAsyncioTestCase):
         await server.wait_closed()
         self.assertTrue(True)
 
+    async def test_release_cycle_end_to_end(self):
+        """
+        Ciclo de devolução TCP real (PDF §2.5 / CT06):
+
+        1. Master A REAL aceita um worker emprestado via REGISTER_TEMPORARY_WORKER.
+        2. Worker emprestado envia ALIVE periodicamente, A responde NO_TASK.
+        3. Forçamos a carga normalizada (samples < RELEASE_THRESHOLD) e chamamos
+           release_normalized_temporary_workers().
+        4. Validamos:
+           a) Worker recebe COMMAND_RELEASE com ORIGINAL_MASTER_ADDRESS correto.
+           b) Master B fake recebe NOTIFY_WORKER_RETURNED via pool M2M.
+           c) temporary_workers fica vazio após o release.
+        """
+        import master as m
+
+        m.task_queue.clear()
+        m.connected_workers.clear()
+        m.temporary_workers.clear()
+        m.neighbor_masters.clear()
+        m.load_samples.clear()
+        m.m2m_pool.clear()
+        m.CAPACITY = 100
+        m.RELEASE_THRESHOLD = 60
+
+        notify_received = asyncio.Event()
+        captured_notify = {}
+
+        async def fake_master_b(reader, writer):
+            try:
+                data = await asyncio.wait_for(reader.readline(), timeout=5)
+                if data:
+                    captured_notify["msg"] = json.loads(data.decode().strip())
+                    notify_received.set()
+                # mantém aberta para o caso do master A reutilizar pool
+                try:
+                    await asyncio.wait_for(reader.read(), timeout=2)
+                except (asyncio.TimeoutError, Exception):
+                    pass
+            finally:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+
+        srv_b = await asyncio.start_server(fake_master_b, "127.0.0.1", 0)
+        port_b = srv_b.sockets[0].getsockname()[1]
+        original_master_addr = f"127.0.0.1:{port_b}"
+        m.neighbor_masters["B"] = original_master_addr
+
+        srv_a = await asyncio.start_server(m.tratar_conexao, "127.0.0.1", 0)
+        port_a = srv_a.sockets[0].getsockname()[1]
+
+        received_release = asyncio.Event()
+        worker_received = {}
+
+        async def borrowed_worker_client():
+            reader, writer = await asyncio.open_connection("127.0.0.1", port_a)
+            try:
+                register = protocol.build_register_temporary_worker(
+                    "REQ-REG-E2E", "WORKER_E2E", original_master_addr
+                )
+                writer.write(protocol.encode_line(register))
+                await writer.drain()
+
+                alive = {"WORKER": "ALIVE", "WORKER_UUID": "WORKER_E2E",
+                         "SERVER_UUID": "Master_B"}
+                writer.write(protocol.encode_line(alive))
+                await writer.drain()
+
+                while True:
+                    data = await asyncio.wait_for(reader.readline(), timeout=5)
+                    if not data:
+                        break
+                    msg = json.loads(data.decode().strip())
+                    if msg.get("TYPE") == "COMMAND_RELEASE":
+                        worker_received["release"] = msg
+                        received_release.set()
+                        return
+                    if msg.get("TASK") == "NO_TASK":
+                        await asyncio.sleep(0.05)
+                        writer.write(protocol.encode_line(alive))
+                        await writer.drain()
+            finally:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+
+        worker_task = asyncio.create_task(borrowed_worker_client())
+
+        for _ in range(50):
+            await asyncio.sleep(0.05)
+            if "WORKER_E2E" in m.connected_workers and "WORKER_E2E" in m.temporary_workers:
+                break
+        self.assertIn("WORKER_E2E", m.connected_workers,
+                      "Worker emprestado não foi registrado em connected_workers")
+        self.assertEqual(
+            m.temporary_workers.get("WORKER_E2E"), original_master_addr,
+            "ORIGINAL_MASTER_ADDRESS não foi preservado"
+        )
+
+        m.load_samples.extend([10, 10, 10])
+        released = await m.release_normalized_temporary_workers()
+        self.assertEqual(released, 1, "release não foi disparado para o worker ocioso")
+
+        try:
+            await asyncio.wait_for(received_release.wait(), timeout=5)
+            await asyncio.wait_for(notify_received.wait(), timeout=5)
+        finally:
+            worker_task.cancel()
+            try:
+                await worker_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            srv_a.close()
+            await srv_a.wait_closed()
+            srv_b.close()
+            await srv_b.wait_closed()
+
+        rel = worker_received.get("release")
+        self.assertIsNotNone(rel, "Worker não recebeu COMMAND_RELEASE")
+        self.assertEqual(rel["TYPE"], "COMMAND_RELEASE")
+        self.assertEqual(rel["PAYLOAD"]["ORIGINAL_MASTER_ADDRESS"], original_master_addr,
+                         "COMMAND_RELEASE com endereço incorreto")
+
+        notify = captured_notify.get("msg")
+        self.assertIsNotNone(notify, "Master B não recebeu NOTIFY_WORKER_RETURNED")
+        self.assertEqual(notify["TYPE"], "NOTIFY_WORKER_RETURNED")
+        self.assertEqual(notify["PAYLOAD"]["WORKER_ID"], "WORKER_E2E")
+
+        self.assertNotIn("WORKER_E2E", m.temporary_workers,
+                         "temporary_workers deveria estar vazio após release")
+
     async def test_register_temporary_worker_routed_to_sprint02(self):
         """
         Regressão: REGISTER_TEMPORARY_WORKER usa envelope {TYPE,REQUEST_ID,PAYLOAD}
