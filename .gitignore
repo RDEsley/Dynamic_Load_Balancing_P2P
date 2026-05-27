@@ -37,6 +37,9 @@ logs/
 # IDE/editor metadata
 .vscode/
 .idea/
+.cursor/
+.agents/
+skills-lock.json
 
 # Local git worktrees
 .worktrees/

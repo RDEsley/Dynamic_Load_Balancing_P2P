@@ -8,6 +8,12 @@ import protocol  # noqa: E402
 from worker import build_alive_payload, parse_host_port  # noqa: E402
 
 
+class TestWorkerHeartbeat(unittest.TestCase):
+    def test_build_heartbeat_request(self):
+        msg = protocol.build_heartbeat_request("Master_A")
+        self.assertEqual(msg, {"SERVER_UUID": "Master_A", "TASK": "HEARTBEAT"})
+
+
 class TestWorkerRedirect(unittest.TestCase):
     def test_build_register_temporary_worker_payload(self):
         msg = protocol.build_register_temporary_worker(

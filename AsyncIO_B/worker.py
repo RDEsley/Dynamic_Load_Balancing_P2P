@@ -2,24 +2,28 @@ import asyncio
 import json
 import os
 import random
+import time
 
 from protocol import (
+    build_heartbeat_request,
     build_register_temporary_worker,
     encode_line,
     get_message_type,
     new_request_id,
 )
 
-HOST = "0.0.0.0"
-PORT = 8001
+HOST = "127.0.0.1"
+PORT = 8000
 ORIGINAL_MASTER_ID = "B"
+MASTER_SERVER_UUID = "Master_B"
 WORKER_UUID = "Worker_1"
 INTERVALO_NO_TASK = 5
+HEARTBEAT_INTERVAL = 10
 READ_TIMEOUT = 5
 
 
 def read_worker_config():
-    global HOST, PORT, ORIGINAL_MASTER_ID, WORKER_UUID
+    global HOST, PORT, ORIGINAL_MASTER_ID, MASTER_SERVER_UUID, WORKER_UUID
     paths = [
         os.path.join(os.path.dirname(__file__), ".env"),
         os.path.join(os.path.dirname(__file__), "..", ".env"),
@@ -43,6 +47,8 @@ def read_worker_config():
                         WORKER_UUID = value
                     elif key == "ORIGINAL_MASTER_ID":
                         ORIGINAL_MASTER_ID = value
+                    elif key in ("MASTER_SERVER_UUID", "SERVER_UUID"):
+                        MASTER_SERVER_UUID = value
         except OSError:
             pass
 
@@ -57,6 +63,26 @@ def build_alive_payload(borrowed: bool, original_master_id: str | None) -> dict:
     if borrowed and original_master_id:
         payload["SERVER_UUID"] = original_master_id
     return payload
+
+
+async def send_heartbeat(reader, writer) -> bool:
+    """Sprint 01 — verifica se o Master está ativo."""
+    heartbeat = build_heartbeat_request(MASTER_SERVER_UUID)
+    writer.write(encode_line(heartbeat))
+    await writer.drain()
+    try:
+        data = await asyncio.wait_for(reader.readline(), timeout=READ_TIMEOUT)
+    except asyncio.TimeoutError:
+        print("[HEARTBEAT] Timeout aguardando resposta do Master")
+        return False
+    if not data:
+        return False
+    res = json.loads(data.decode().strip())
+    if res.get("TASK") == "HEARTBEAT" and res.get("RESPONSE") == "ALIVE":
+        print(f"[HEARTBEAT] Master ativo: {res.get('SERVER_UUID')}")
+        return True
+    print(f"[HEARTBEAT] Resposta inesperada: {json.dumps(res)}")
+    return False
 
 
 async def process_query(reader, writer, res: dict) -> None:
@@ -94,7 +120,12 @@ async def connect_and_register(
 
 async def run_session(host: str, port: int, borrowed: bool, original_master_id: str | None):
     reader, writer = await asyncio.open_connection(host, port)
+    last_heartbeat = 0.0
     try:
+        if not borrowed:
+            if not await send_heartbeat(reader, writer):
+                return
+
         alive = build_alive_payload(borrowed, original_master_id)
         print(f"[LOG] Conectado {host}:{port} -> {json.dumps(alive)}")
         writer.write(encode_line(alive))
@@ -106,6 +137,10 @@ async def run_session(host: str, port: int, borrowed: bool, original_master_id: 
             except asyncio.TimeoutError:
                 if borrowed:
                     raise ConnectionError("Master emprestador indisponível (CT08)")
+                now = time.monotonic()
+                if now - last_heartbeat >= HEARTBEAT_INTERVAL:
+                    if await send_heartbeat(reader, writer):
+                        last_heartbeat = now
                 writer.write(encode_line(build_alive_payload(borrowed, original_master_id)))
                 await writer.drain()
                 continue
@@ -148,6 +183,11 @@ async def run_session(host: str, port: int, borrowed: bool, original_master_id: 
                 writer.write(encode_line(build_alive_payload(borrowed, original_master_id)))
                 await writer.drain()
             elif res.get("TASK") == "NO_TASK":
+                if not borrowed:
+                    now = time.monotonic()
+                    if now - last_heartbeat >= HEARTBEAT_INTERVAL:
+                        if await send_heartbeat(reader, writer):
+                            last_heartbeat = now
                 await asyncio.sleep(INTERVALO_NO_TASK)
                 writer.write(encode_line(build_alive_payload(borrowed, original_master_id)))
                 await writer.drain()

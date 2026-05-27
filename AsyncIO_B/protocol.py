@@ -134,6 +134,11 @@ def build_command_release(request_id: str, original_master_address: str) -> dict
     }
 
 
+def build_heartbeat_request(server_uuid: str) -> dict:
+    """Sprint 01 — Worker verifica se o Master está ativo."""
+    return {"SERVER_UUID": server_uuid, "TASK": "HEARTBEAT"}
+
+
 def build_notify_worker_returned(request_id: str, worker_id: str) -> dict:
     return {
         "TYPE": "NOTIFY_WORKER_RETURNED",

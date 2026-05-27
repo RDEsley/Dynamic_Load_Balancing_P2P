@@ -134,16 +134,9 @@ def build_command_release(request_id: str, original_master_address: str) -> dict
     }
 
 
-def build_release_request(request_id: str, worker_ids: list[str], original_master_address: str) -> dict:
-    """Construir mensagem de pedido de devolução de workers emprestados."""
-    return {
-        "TYPE": "RELEASE_REQUEST",
-        "REQUEST_ID": request_id,
-        "PAYLOAD": {
-            "WORKER_IDS": worker_ids,
-            "ORIGINAL_MASTER_ADDRESS": original_master_address,
-        },
-    }
+def build_heartbeat_request(server_uuid: str) -> dict:
+    """Sprint 01 — Worker verifica se o Master está ativo."""
+    return {"SERVER_UUID": server_uuid, "TASK": "HEARTBEAT"}
 
 
 def build_notify_worker_returned(request_id: str, worker_id: str) -> dict:

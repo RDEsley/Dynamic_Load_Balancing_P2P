@@ -116,6 +116,114 @@ class TestMasterHelpers(unittest.IsolatedAsyncioTestCase):
 
         release_spy.assert_awaited_once_with(worker_id, writer)
 
+    async def test_alive_does_not_overwrite_original_address_from_register(self):
+        """
+        Regression: if a temporary worker registers with ORIGINAL_MASTER_ADDRESS (host:port),
+        subsequent ALIVE payloads that include SERVER_UUID must not overwrite that address.
+        Otherwise COMMAND_RELEASE may carry an invalid value (e.g. "B") and the worker can't return.
+        """
+        import master as m
+
+        class DummyWriter:
+            def __init__(self):
+                self.buffer = []
+
+            def write(self, data):
+                self.buffer.append(data)
+
+            async def drain(self):
+                return None
+
+            def get_extra_info(self, _name):
+                return ("127.0.0.1", 9999)
+
+        m.task_queue.clear()
+        m.connected_workers.clear()
+        m.temporary_workers.clear()
+        m.neighbor_masters.clear()
+
+        worker_id = "WB1"
+        original_address = "192.168.0.10:8001"
+        m.temporary_workers[worker_id] = original_address
+        # Different address than the one registered (simulates ambiguous neighbor mapping);
+        # ALIVE must NOT overwrite the address we got from REGISTER_TEMPORARY_WORKER.
+        m.neighbor_masters["B"] = "10.0.0.1:8001"
+
+        reader = object()
+        writer = DummyWriter()
+        addr = ("127.0.0.1", 9001)
+
+        alive = {"WORKER": "ALIVE", "WORKER_UUID": worker_id, "SERVER_UUID": "B"}
+        await m.tratar_sprint02(alive, reader, writer, addr)
+
+        self.assertEqual(m.temporary_workers.get(worker_id), original_address)
+
+    async def test_borrowed_worker_not_released_after_task(self):
+        """PDF CT06: devolução só quando carga normaliza (histerese), não após cada tarefa."""
+        import master as m
+
+        class DummyWriter:
+            def __init__(self):
+                self.buffer = []
+
+            def write(self, data):
+                self.buffer.append(data)
+
+            async def drain(self):
+                return None
+
+            def get_extra_info(self, _name):
+                return ("127.0.0.1", 9999)
+
+        m.temporary_workers.clear()
+        m.connected_workers.clear()
+        worker_id = "WB1"
+        m.temporary_workers[worker_id] = "127.0.0.1:8001"
+        m.connected_workers[worker_id] = {
+            "writer": DummyWriter(),
+            "busy": True,
+        }
+
+        release_spy = AsyncMock()
+        original_release = m.maybe_release_temporary_worker
+        m.maybe_release_temporary_worker = release_spy
+        try:
+            payload = {
+                "STATUS": "OK",
+                "TASK": "QUERY",
+                "WORKER_UUID": worker_id,
+            }
+            await m.tratar_sprint02(
+                payload, object(), m.connected_workers[worker_id]["writer"], ("127.0.0.1", 9001)
+            )
+        finally:
+            m.maybe_release_temporary_worker = original_release
+
+        release_spy.assert_not_awaited()
+        self.assertIn(worker_id, m.temporary_workers)
+
+    async def test_ack_payload_pdf_format(self):
+        import master as m
+
+        class DummyWriter:
+            def __init__(self):
+                self.buffer = []
+
+            def write(self, data):
+                self.buffer.append(data)
+
+            async def drain(self):
+                return None
+
+        writer = DummyWriter()
+        payload = {"STATUS": "OK", "TASK": "QUERY", "WORKER_UUID": "W1"}
+        await m.tratar_sprint02(payload, object(), writer, ("127.0.0.1", 9001))
+
+        import json
+
+        sent = json.loads(writer.buffer[-1].decode().strip())
+        self.assertEqual(sent, {"STATUS": "ACK"})
+
 
 if __name__ == "__main__":
     unittest.main()
