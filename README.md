@@ -143,6 +143,8 @@ Se aparecer `[M2M] Rejeitando HELP: needed=1 available=0`, o Master B não tinha
 
 Ordem de ligar: **Master B → Worker → Master A** (mesma ordem do teste local).
 
+Para **3 ou mais Masters** na mesma rede (A, B, C…), veja a seção [Vários Masters na mesma rede](#-vários-masters-na-mesma-rede-2-3-ou-mais-nós).
+
 ### Comandos úteis no Master (enquanto ele está rodando)
 
 No terminal do Master, você pode digitar:
@@ -339,6 +341,180 @@ python master.py
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+---
+
+## 🌐 Vários Masters na mesma rede (2, 3 ou mais nós)
+
+O projeto foi pensado como **P2P entre Masters**: cada Master é um “chefe” com sua Farm de Workers. Quando um Master **satura**, ele conversa com **Masters vizinhos** listados em `NEIGHBOR_MASTERS` e pode **emprestar** Workers deles.
+
+> **Importante:** cada **Worker** conecta em **um único Master** por vez (o “dono”). O empréstimo só muda temporariamente para qual Master ele obedece — não há Worker ligado a dois Masters ao mesmo tempo.
+
+### Como funciona na prática
+
+| Papel | Conexão com vários Masters? |
+|:---|:---|
+| **Master saturado (ex.: A)** | Sim — pede ajuda aos vizinhos configurados |
+| **Master vizinho (ex.: B, C)** | Sim — pode receber `REQUEST_HELP` de vários Masters |
+| **Worker** | Não em paralelo — 1 Master ativo; redireciona se emprestado |
+
+Quando a fila passa de `CAPACITY`, o Master percorre `NEIGHBOR_MASTERS` **em sequência** e para no **primeiro vizinho que aceitar** (`RESPONSE_ACCEPTED`). Se todos recusarem ou der timeout (5 s), o pedido falha até o próximo ciclo do monitor.
+
+### Formato de `NEIGHBOR_MASTERS`
+
+No `.env` de cada Master, use **vários vizinhos** separados por **vírgula**:
+
+```env
+NEIGHBOR_MASTERS=B=192.168.1.15:8001,C=192.168.1.16:8002
+```
+
+Cada item é `MASTER_ID=IP:PORTA`:
+
+- `MASTER_ID` — identificador do vizinho (ex.: `B`, `C`). Deve bater com o `MASTER_ID` que o outro Master usa ao pedir ajuda.
+- `IP:PORTA` — endereço TCP onde o outro Master **escuta** (`HOST`/`PORT` dele).
+
+O Master **não precisa** listar a si mesmo — só quem pode emprestar Workers quando **ele** estiver saturado.
+
+### Exemplo: 3 Masters (A, B e C) na mesma Wi‑Fi
+
+Cenário didático:
+
+- **Master A** — porta `8000`, fila grande (saturado), pede ajuda a B e C.
+- **Master B** — porta `8001`, Workers locais, empresta para A se estiver ocioso.
+- **Master C** — porta `8002`, Workers locais, empresta para A se B recusar.
+
+```
+                    REQUEST_HELP (se A saturar)
+         ┌──────────────────────────────────────────┐
+         │                                          │
+    ┌────▼────┐                              ┌──────▼────┐
+    │ Master A│                              │ Master B  │
+    │ :8000   │                              │ :8001     │
+    │ NUM_TASKS│                             │ Workers   │
+    │ > CAPACITY                             └─────┬─────┘
+    └────┬────┘                                    │
+         │              REQUEST_HELP (se B recusar) │
+         │         ┌─────────────────────────────────┘
+         │         │
+         │    ┌────▼────┐
+         └────► Master C │
+              │ :8002   │
+              │ Workers │
+              └─────────┘
+```
+
+#### Master A (saturado) — PC ou pasta `testes/AsyncIO_A`
+
+```env
+HOST=0.0.0.0
+PORT=8000
+SERVER_UUID=Master_A
+MASTER_ID=A
+CAPACITY=100
+NUM_TASKS=120
+NEIGHBOR_MASTERS=B=192.168.1.15:8001,C=192.168.1.16:8002
+```
+
+#### Master B (vizinho) — IP `192.168.1.15`
+
+```env
+HOST=0.0.0.0
+PORT=8001
+SERVER_UUID=Master_B
+MASTER_ID=B
+CAPACITY=100
+NUM_TASKS=0
+NEIGHBOR_MASTERS=A=192.168.1.14:8000,C=192.168.1.16:8002
+```
+
+> O B lista A e C para poder **devolver** notificações (`NOTIFY_WORKER_RETURNED`) e resolver endereços de origem — e para o caso de o B saturar no futuro.
+
+#### Master C (vizinho) — IP `192.168.1.16`
+
+```env
+HOST=0.0.0.0
+PORT=8002
+SERVER_UUID=Master_C
+MASTER_ID=C
+CAPACITY=100
+NUM_TASKS=0
+NEIGHBOR_MASTERS=A=192.168.1.14:8000,B=192.168.1.15:8001
+```
+
+#### Workers (um por Master “dono”)
+
+**Worker do B** (roda no PC do B ou aponta para o IP do B):
+
+```env
+MASTER_HOST=192.168.1.15
+PORT=8001
+WORKER_UUID=Worker_B1
+ORIGINAL_MASTER_ID=B
+MASTER_SERVER_UUID=Master_B
+```
+
+**Worker do C**:
+
+```env
+MASTER_HOST=192.168.1.16
+PORT=8002
+WORKER_UUID=Worker_C1
+ORIGINAL_MASTER_ID=C
+MASTER_SERVER_UUID=Master_C
+```
+
+Substitua os IPs pelos valores reais de cada máquina (`ipconfig` no Windows).
+
+### Ordem recomendada para ligar
+
+1. Masters **vizinhos** com Workers (B e C) — cada um com seu Worker já conectado.
+2. Por último, o Master **saturado** (A), para não pedir ajuda antes dos Workers estarem ociosos nos vizinhos.
+
+Ordem mínima com 2 nós: **B → Worker → A** (igual ao guia para iniciantes).
+
+### Checklist rápido
+
+| Item | Verificação |
+|:---|:---|
+| IPs corretos | `ipconfig` em cada PC; use IPv4 da mesma rede |
+| Portas distintas | A=`8000`, B=`8001`, C=`8002` (ou outras, desde que únicas) |
+| `MASTER_ID` único | Cada Master com letra/nome diferente (`A`, `B`, `C`) |
+| Vizinhos no `.env` | Quem pede ajuda lista quem pode emprestar |
+| Firewall | Liberar as portas TCP usadas em cada PC |
+| Workers ociosos | Worker do vizinho rodando **antes** do A saturar |
+| Saturação | `NUM_TASKS` (ou `add_task`) **maior** que `CAPACITY` no Master que pede ajuda |
+
+### O que você deve ver nos logs (Master A saturado)
+
+1. `[M2M] Saturação detectada`
+2. `[M2M] EMIT REQUEST_HELP -> B` (tenta o primeiro vizinho da lista)
+3. Se B aceitar: `RESPONSE_ACCEPTED` + `COMMAND_REDIRECT` no terminal do B
+4. Se B recusar: tentativa seguinte para `C` na próxima rodada do monitor (ou após cooldown de 10 s)
+5. `[WORKER] Redirecionando` no Worker emprestado
+6. `[TASK DISTRIBUIDA] Worker REMOTO` no Master A
+
+### Limitações atuais (saber antes da demonstração)
+
+- **Pedidos em paralelo (CT03 do PDF):** hoje o código envia `REQUEST_HELP` **um vizinho por vez** e para no primeiro que aceitar; não dispara vários pedidos simultâneos a todos os vizinhos.
+- **Um empréstimo por ciclo:** após um vizinho aceitar, o monitor aguarda o cooldown (`HELP_COOLDOWN_SECONDS`, 10 s) antes de pedir de novo.
+- **Mais Workers:** para emprestar 2+ Workers, o vizinho precisa ter 2+ Workers **ociosos** conectados; o Master aceita empréstimo parcial (`min(disponíveis, pedidos)`).
+
+### Teste local com 3 portas (um só PC)
+
+Dá para simular 3 Masters abrindo **3 terminais** com `.env` diferentes (portas `8000`, `8001`, `8002`) e 2 terminais de Worker (B e C). Use `127.0.0.1` nos vizinhos:
+
+```env
+# Master A
+NEIGHBOR_MASTERS=B=127.0.0.1:8001,C=127.0.0.1:8002
+
+# Master B
+NEIGHBOR_MASTERS=A=127.0.0.1:8000,C=127.0.0.1:8002
+
+# Master C
+NEIGHBOR_MASTERS=A=127.0.0.1:8000,B=127.0.0.1:8001
+```
+
+Copie `AsyncIO/.env.example` para três arquivos (ou use `scripts/generate-env.ps1` como base) e ajuste `PORT` / `NEIGHBOR_MASTERS` antes de cada `python master.py`.
 
 ---
 
