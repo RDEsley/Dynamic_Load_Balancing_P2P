@@ -234,7 +234,7 @@ Se aparecer `OK` no final, a lógica principal está passando nos testes.
 
 ### Worker (`AsyncIO/worker.py`)
 - Conexão TCP persistente
-- Sprint 1: `HEARTBEAT` a cada 10 s (worker local)
+- Sprint 1: `HEARTBEAT` na entrada da sessão + loop periódico a cada `HEARTBEAT_INTERVAL` (10s) — envio fire-and-forget; resposta `ALIVE` é despachada pelo loop principal por tipo de mensagem para não causar race com `COMMAND_REDIRECT`/`COMMAND_RELEASE`
 - Sprint 2: `ALIVE` → `QUERY`/`NO_TASK` → `OK`/`NOK` → `ACK`
 - Sprint 3: `COMMAND_REDIRECT`, `REGISTER_TEMPORARY_WORKER`, `COMMAND_RELEASE`
 

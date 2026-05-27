@@ -568,8 +568,9 @@ async def tratar_m2m(payload: dict, reader, writer, addr) -> bool:
         log_worker_counts("Worker devolvido notificado")
         return True
 
-    print(f"[M2M] Tipo desconhecido ignorado: {msg_type} de {addr}")
-    return True
+    # REGISTER_TEMPORARY_WORKER usa envelope M2M mas é Worker→Master:
+    # delega ao tratar_sprint02 (assim como qualquer tipo não reconhecido aqui).
+    return False
 
 
 async def tratar_sprint02(payload: dict, reader, writer, addr) -> bool:

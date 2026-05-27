@@ -78,6 +78,50 @@ class TestIntegrationM2M(unittest.IsolatedAsyncioTestCase):
         await server.wait_closed()
         self.assertTrue(True)
 
+    async def test_register_temporary_worker_routed_to_sprint02(self):
+        """
+        Regressão: REGISTER_TEMPORARY_WORKER usa envelope {TYPE,REQUEST_ID,PAYLOAD}
+        mas é uma mensagem Worker→Master (não Master-to-Master). O dispatcher
+        precisa entregá-la a tratar_sprint02 para que o worker temporário fique
+        registrado com o ORIGINAL_MASTER_ADDRESS exato (host:port) recebido,
+        e não apenas inferido a partir de SERVER_UUID em ALIVEs subsequentes.
+        """
+        import master as m
+
+        m.task_queue.clear()
+        m.connected_workers.clear()
+        m.temporary_workers.clear()
+        m.neighbor_masters.clear()
+
+        server = await asyncio.start_server(m.tratar_conexao, "127.0.0.1", 19012)
+        await asyncio.sleep(0.05)
+
+        reader, writer = await asyncio.open_connection("127.0.0.1", 19012)
+        msg = protocol.build_register_temporary_worker(
+            "REQ-REG-TEST", "WTEMP", "10.0.0.5:8001"
+        )
+        writer.write(protocol.encode_line(msg))
+        await writer.drain()
+        await asyncio.sleep(0.25)
+
+        registered = "WTEMP" in m.connected_workers
+        original_addr = m.temporary_workers.get("WTEMP")
+
+        writer.close()
+        await writer.wait_closed()
+        server.close()
+        await server.wait_closed()
+
+        self.assertTrue(
+            registered,
+            "Worker temporário não foi registrado em connected_workers",
+        )
+        self.assertEqual(
+            original_addr,
+            "10.0.0.5:8001",
+            "ORIGINAL_MASTER_ADDRESS precisa ser o host:port enviado, não inferido",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
