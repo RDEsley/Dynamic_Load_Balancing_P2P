@@ -492,15 +492,6 @@ async def saturation_monitor():
             current_load = len(task_queue)
         load_samples.append(current_load)
 
-        async with workers_lock:
-            n_temp = len(temporary_workers)
-        if n_temp > 0:
-            ts = time.strftime("%H:%M:%S")
-            print(
-                f"[M2M] {ts} monitor: load={current_load} threshold={RELEASE_THRESHOLD} "
-                f"temp_workers={n_temp} samples={list(load_samples)[-3:]}"
-            )
-
         # When load has normalized (hysteresis), release borrowed workers back to origin.
         if current_load < RELEASE_THRESHOLD and is_normalized(list(load_samples), RELEASE_THRESHOLD):
             try:
@@ -700,32 +691,16 @@ async def release_normalized_temporary_workers() -> int:
     async with workers_lock:
         worker_ids = list(temporary_workers.keys())
 
-    if not worker_ids:
-        return 0
-
     released = 0
-    skipped_busy = []
-    skipped_no_writer = []
     for worker_id in worker_ids:
         async with workers_lock:
             meta = connected_workers.get(worker_id, {})
             worker_writer = meta.get("writer")
             is_busy = bool(meta.get("busy"))
-        if not worker_writer:
-            skipped_no_writer.append(worker_id)
-            continue
-        if is_busy:
-            skipped_busy.append(worker_id)
+        if not worker_writer or is_busy:
             continue
         if await maybe_release_temporary_worker(worker_id, worker_writer):
             released += 1
-
-    if released == 0 and (skipped_busy or skipped_no_writer):
-        ts = time.strftime("%H:%M:%S")
-        print(
-            f"[M2M] {ts} Devolução adiada: busy={skipped_busy} "
-            f"sem_writer={skipped_no_writer} (tentará no próximo ciclo)"
-        )
     return released
 
 
