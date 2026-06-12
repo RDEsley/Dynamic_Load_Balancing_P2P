@@ -23,7 +23,7 @@ def load_dotenv(path='.env'):
 
 load_dotenv()
 
-HOST        = os.getenv('MASTER_HOST', '127.0.0.1')
+HOST        = os.getenv('MASTER_HOST', '0.0.0.0')
 PORT        = int(os.getenv('MASTER_PORT', '9000'))
 SERVER_UUID = os.getenv('SERVER_UUID', f'MASTER_{PORT}')
 
