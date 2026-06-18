@@ -34,10 +34,15 @@ Dynamic_Load_Balancing_P2P/
 ├── worker.py              # Worker: heartbeat, tarefas, redirect/release
 ├── supervisor.py          # Cliente TLS → nuted-ia.dev (Sprint 4)
 ├── scripts/
-│   └── test_supervisor.py # Envio único de métricas (teste seguro)
+│   ├── test_supervisor.py # Envio único de métricas (teste seguro)
+│   └── run_demo.py        # Demo rápida (subprocessos)
+├── .agents/               # Superpowers — skills para agentes de IA
+│   └── skills/            # brainstorming, TDD, debugging, plans, etc.
+├── docs/superpowers/      # Especificações de design do projeto
 ├── document.md            # Especificação das sprints (texto)
 ├── plano_proj_SD-26_1.pdf # Plano oficial do professor
-├── .env.example           # Template de configuração
+├── .env.example           # Template de configuração (copie para .env)
+├── skills-lock.json       # Lockfile das skills Superpowers
 ├── requirements.txt
 └── README.md
 ```
@@ -66,7 +71,27 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
-Edite o `.env` conforme o ambiente (lab, IP do master, vizinhos).
+Edite o `.env` conforme o ambiente (lab, IP do master, vizinhos). Todas as variáveis aceitas estão documentadas em `.env.example`.
+
+---
+
+## Superpowers (`.agents`)
+
+O repositório inclui [Superpowers](https://github.com/obra/superpowers) — um conjunto de skills para agentes de IA (Cursor, Claude Code, Copilot CLI) que orientam brainstorming, TDD, debugging sistemático e revisão de código.
+
+| Item | Descrição |
+|:---|:---|
+| `.agents/skills/` | 14 skills instaladas no projeto |
+| `skills-lock.json` | Versões fixadas para reprodutibilidade |
+| `.agents/README.md` | Guia rápido da pasta |
+
+Para atualizar as skills para a versão mais recente:
+
+```powershell
+npx skills update -p -y
+```
+
+> Opcional: não é necessário para rodar o sistema distribuído — apenas para desenvolvimento assistido por IA.
 
 ---
 
@@ -88,6 +113,7 @@ CAPACITY=4                   # limiar de saturação (tarefas pendentes)
 RELEASE_THRESHOLD=2          # histerese para devolver workers emprestados
 TASK_COUNT=50                # tarefas simuladas (0 = infinito)
 NEIGHBORS=outro_grupo=192.168.x.x:9000
+WORKER_TTL=25                 # segundos sem heartbeat antes de remover worker
 ```
 
 ### Worker (conectar ao master)
@@ -97,6 +123,7 @@ No terminal do worker ou em `.env` separado:
 ```env
 MASTER_HOST=127.0.0.1        # IP do master (não use 0.0.0.0 aqui)
 MASTER_PORT=9000
+MASTER_SERVER_UUID=master_3  # UUID do master ao qual o worker pertence
 ```
 
 ### Supervisor Sprint 4 (dashboard do professor)
@@ -442,6 +469,8 @@ Para conectar com outras equipes na rede da faculdade:
 - Repositório: [github.com/RDEsley/Dynamic_Load_Balancing_P2P](https://github.com/RDEsley/Dynamic_Load_Balancing_P2P)
 - `plano_proj_SD-26_1.pdf` — plano oficial (inclui Sprint 4 e payload do supervisor)
 - `document.md` — especificação detalhada das sprints
+- `.env.example` — template de variáveis de ambiente
+- [obra/superpowers](https://github.com/obra/superpowers) — skills em `.agents/`
 - Dashboard: https://nuted-ia.dev/supervisor/dashboard/
 
 ---
